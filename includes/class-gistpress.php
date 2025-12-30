@@ -59,20 +59,6 @@ class GistPress {
 	protected $prism_gist_langs = array( 'HTML' => 'markup', 'JavaScript' => 'javascript', 'PHP' => 'php' );
 
 	/**
-	 * List of Prism language files to enqueue.
-	 *
-	 * @var array
-	 */
-	protected $prism_enqueue = array();
-
-	/**
-	 * Post meta key for array of Prism language scripts to enqueue.
-	 *
-	 * @var string
-	 */
-	protected $prism_langs_key = 'gist_prism_langs';
-
-	/**
 	 * Sets a logger instance on the object.
 	 *
 	 * Since logging is optional, the dependency injection is done via this
@@ -234,8 +220,6 @@ class GistPress {
 		$json_url = $url . '.json';
 		if ( $this->use_prism ) {
 			$json_url = 'https://api.github.com/gists/' . $attr['id'];
-			//error_log( 'json_url = ' . 'https://api.github.com/gists/' . $attr['id'] );
-			//error_log( 'Should be https://api.github.com/gists/a3753707a4f570f3a59b8d68d1fea069' );
 		}
 
 		if ( is_feed() ) {
@@ -267,18 +251,6 @@ class GistPress {
 				wp_enqueue_style( 'prism', $this->prism_cdn_prefix . 'themes/prism.min.css' );
 				wp_enqueue_script( 'prism', $this->prism_cdn_prefix . 'components/prism-core.min.js', array(), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
 				wp_enqueue_script( 'prism-autoloader', $this->prism_cdn_prefix . 'plugins/autoloader/prism-autoloader.min.js', array( 'prism' ), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
-				// Comment out prism.min and markup as autoload will autoload stuff.
-				//wp_enqueue_script( 'prism', $this->prism_cdn_prefix . 'prism.min.js', array(), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
-				//wp_enqueue_script( 'prism-markup-templating', $this->prism_cdn_prefix . 'components/prism-markup-templating.min.js', array( 'prism' ), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
-
-				// Enqueue the appropriate language files.
-				$this->prism_enqueue = get_post_meta( get_the_ID(), $this->prism_langs_key, true );
-				if ( is_array( $this->prism_enqueue ) ) {
-					foreach ( array_keys( $this->prism_enqueue ) as $prism_lang ) {
-// Comment out as prism autoloader will
-//						wp_enqueue_script( 'prism-' . $prism_lang, $this->prism_cdn_prefix . 'components/prism-' . $prism_lang . '.min.js', array( 'prism'), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
-					}
-				}
 			}
 
 			/**
@@ -454,13 +426,9 @@ class GistPress {
 					if ( empty( $args['file'] ) ) {
 						$args['file'] = array_keys( $json['files'] )[0];
 					}
-					//error_log( 'Retrieved gist from: ' . $url );
-					//error_log( 'File: ' . $args['file'] );
-					//error_log( 'Raw: ' . $json['files'][ $args['file'] ]['content'] );
 
 					// Look up the CSS class for this gist's language (e.g. PHP, CSS, HTML etc.).
 					$prism_lang = $this->get_prism_lang( $json['files'][ $args['file'] ]['language'] );
-					$this->prism_enqueue[ $prism_lang ] = true; // Add this lang to list of Prism scripts to enqueue.
 
 					$html = wp_sprintf( '<pre><code style="padding:0" class="language-%s">%s</code></pre>', esc_attr( $prism_lang ), esc_html( $json['files'][ $args['file'] ]['content'] ) );
 
@@ -468,8 +436,6 @@ class GistPress {
 
 					// Update the post meta fallback. See http://core.trac.wordpress.org/ticket/21767 for details.
 					update_post_meta( get_the_ID(), $raw_key, addslashes( $html ) );
-					// Update the post meta with the list of Prism language scripts to enqueue.
-					update_post_meta( get_the_ID(), $this->prism_langs_key, $this->prism_enqueue );
 				}
 			}
 
@@ -482,8 +448,6 @@ class GistPress {
 					$html = $this->process_gist_html( $fallback, $args );
 				}
 				else {
-					//$lang_class = 'language-php'; // ToDo: Get $json->files->FILE->language and look up PHP -> php.
-					//$html = '<pre><code class="' . $lang_class . '">' . $fallback . '</code></pre>';
 					$html = $fallback;
 				}
 
@@ -522,6 +486,7 @@ class GistPress {
 		$response = wp_remote_get( $url, array( 'sslverify' => false ) );
 
 		if ( 200 === wp_remote_retrieve_response_code( $response ) ) {
+			// For Prism, decode json to an associative array as I could not find out how to loop through $json->files.
 			if ( $this->use_prism ) { $associative = true; }
 			return json_decode( wp_remote_retrieve_body( $response ), $associative );
 		}
