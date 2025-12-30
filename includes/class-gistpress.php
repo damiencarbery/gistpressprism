@@ -33,6 +33,46 @@ class GistPress {
 	protected $delete_shortcode_transients = false;
 
 	/**
+	 * Toggle to use Prism syntax highlighter or default Gist formatting.
+	 *
+	 * @see https://prismjs.com/
+	 *
+	 * @var bool
+	 */
+	protected $use_prism = true;
+
+	/**
+	 * Base url of Prism CDN files.
+	 *
+	 * @see https://cdnjs.com/libraries/prism/1.30.0
+	 *
+	 * @var string
+	 */
+	protected $prism_cdn_prefix = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/';
+
+	/**
+	 * Mapping of Gist languages (as returned in REST API calls) and Prism language classes.
+	 * These are used in the <code> class and to load the appropriate Prism JS files.
+	 *
+	 * @var array
+	 */
+	protected $prism_gist_langs = array( 'HTML' => 'markup', 'JavaScript' => 'javascript', 'PHP' => 'php' );
+
+	/**
+	 * List of Prism language files to enqueue.
+	 *
+	 * @var array
+	 */
+	protected $prism_enqueue = array();
+
+	/**
+	 * Post meta key for array of Prism language scripts to enqueue.
+	 *
+	 * @var string
+	 */
+	protected $prism_langs_key = 'gist_prism_langs';
+
+	/**
 	 * Sets a logger instance on the object.
 	 *
 	 * Since logging is optional, the dependency injection is done via this
@@ -192,6 +232,11 @@ class GistPress {
 
 		$url = 'https://gist.github.com/' . $attr['id'];
 		$json_url = $url . '.json';
+		if ( $this->use_prism ) {
+			$json_url = 'https://api.github.com/gists/' . $attr['id'];
+			//error_log( 'json_url = ' . 'https://api.github.com/gists/' . $attr['id'] );
+			//error_log( 'Should be https://api.github.com/gists/a3753707a4f570f3a59b8d68d1fea069' );
+		}
 
 		if ( is_feed() ) {
 			$html = sprintf( '<a href="%s" target="_blank"><em>%s</em></a>', esc_url( $url ), __( 'View this code snippet on GitHub.', 'gistpress' ) );
@@ -214,8 +259,26 @@ class GistPress {
 
 		// If there was a result, return it.
 		if ( $html ) {
-			if ( $attr['embed_stylesheet'] ) {
+			if ( $attr['embed_stylesheet'] && !$this->use_prism ) {
 				wp_enqueue_style( 'gistpress' );
+			}
+			if ( $this->use_prism ) {
+				// These files are core Prism files.
+				wp_enqueue_style( 'prism', $this->prism_cdn_prefix . 'themes/prism.min.css' );
+				wp_enqueue_script( 'prism', $this->prism_cdn_prefix . 'components/prism-core.min.js', array(), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
+				wp_enqueue_script( 'prism-autoloader', $this->prism_cdn_prefix . 'plugins/autoloader/prism-autoloader.min.js', array( 'prism' ), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
+				// Comment out prism.min and markup as autoload will autoload stuff.
+				//wp_enqueue_script( 'prism', $this->prism_cdn_prefix . 'prism.min.js', array(), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
+				//wp_enqueue_script( 'prism-markup-templating', $this->prism_cdn_prefix . 'components/prism-markup-templating.min.js', array( 'prism' ), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
+
+				// Enqueue the appropriate language files.
+				$this->prism_enqueue = get_post_meta( get_the_ID(), $this->prism_langs_key, true );
+				if ( is_array( $this->prism_enqueue ) ) {
+					foreach ( array_keys( $this->prism_enqueue ) as $prism_lang ) {
+// Comment out as prism autoloader will
+//						wp_enqueue_script( 'prism-' . $prism_lang, $this->prism_cdn_prefix . 'components/prism-' . $prism_lang . '.min.js', array( 'prism'), null, array( 'in_footer' => true/*, 'strategy'  => 'defer'*/ ) );
+					}
+				}
 			}
 
 			/**
@@ -368,21 +431,45 @@ class GistPress {
 				// Retrieve raw html from Gist JSON endpoint.
 				$json = $this->fetch_gist( $url );
 
-				if ( ! empty( $json->div ) ) {
-					set_transient( $raw_key, $json->div, $transient_expire );
+				if ( ! $this->use_prism ) {
+					if ( ! empty( $json->div ) ) {
+						set_transient( $raw_key, $json->div, $transient_expire );
+
+						// Update the post meta fallback. See http://core.trac.wordpress.org/ticket/21767 for details.
+						update_post_meta( get_the_ID(), $raw_key, addslashes( $json->div ) );
+
+						$html = $this->process_gist_html( $json->div, $args );
+
+						$this->debug_log( __( '<strong>Raw Source:</strong> Remote JSON Endpoint - ', 'gistpress' ) . $url, $shortcode_hash );
+						$this->debug_log( __( '<strong>Output Source:</strong> Processed the raw source.', 'gistpress' ), $shortcode_hash );
+					}
+
+					// Update the style sheet reference.
+					if ( ! empty( $json->stylesheet ) ) {
+						update_option( 'gistpress_stylesheet', $json->stylesheet );
+					}
+				}
+				else {
+					// If no file specified then use first file in the gist.
+					if ( empty( $args['file'] ) ) {
+						$args['file'] = array_keys( $json['files'] )[0];
+					}
+					//error_log( 'Retrieved gist from: ' . $url );
+					//error_log( 'File: ' . $args['file'] );
+					//error_log( 'Raw: ' . $json['files'][ $args['file'] ]['content'] );
+
+					// Look up the CSS class for this gist's language (e.g. PHP, CSS, HTML etc.).
+					$prism_lang = $this->get_prism_lang( $json['files'][ $args['file'] ]['language'] );
+					$this->prism_enqueue[ $prism_lang ] = true; // Add this lang to list of Prism scripts to enqueue.
+
+					$html = wp_sprintf( '<pre><code style="padding:0" class="language-%s">%s</code></pre>', esc_attr( $prism_lang ), esc_html( $json['files'][ $args['file'] ]['content'] ) );
+
+					set_transient( $raw_key, $html, $transient_expire );
 
 					// Update the post meta fallback. See http://core.trac.wordpress.org/ticket/21767 for details.
-					update_post_meta( get_the_ID(), $raw_key, addslashes( $json->div ) );
-
-					$html = $this->process_gist_html( $json->div, $args );
-
-					$this->debug_log( __( '<strong>Raw Source:</strong> Remote JSON Endpoint - ', 'gistpress' ) . $url, $shortcode_hash );
-					$this->debug_log( __( '<strong>Output Source:</strong> Processed the raw source.', 'gistpress' ), $shortcode_hash );
-				}
-
-				// Update the style sheet reference.
-				if ( ! empty( $json->stylesheet ) ) {
-					update_option( 'gistpress_stylesheet', $json->stylesheet );
+					update_post_meta( get_the_ID(), $raw_key, addslashes( $html ) );
+					// Update the post meta with the list of Prism language scripts to enqueue.
+					update_post_meta( get_the_ID(), $this->prism_langs_key, $this->prism_enqueue );
 				}
 			}
 
@@ -391,7 +478,14 @@ class GistPress {
 
 			if ( $this->unknown() === $html && ( $fallback = get_post_meta( get_the_ID(), $raw_key, true ) ) ) {
 				// Return the fallback instead of the string representing unknown.
-				$html = $this->process_gist_html( $fallback, $args );
+				if ( ! $this->use_prism ) {
+					$html = $this->process_gist_html( $fallback, $args );
+				}
+				else {
+					//$lang_class = 'language-php'; // ToDo: Get $json->files->FILE->language and look up PHP -> php.
+					//$html = '<pre><code class="' . $lang_class . '">' . $fallback . '</code></pre>';
+					$html = $fallback;
+				}
 
 				// Cache the fallback for an hour.
 				$transient_expire = HOUR_IN_SECONDS;
@@ -424,11 +518,12 @@ class GistPress {
 	 * @return object|bool Gist JSON object, or false if anything except a HTTP
 	 *                     Status code of 200 was received.
 	 */
-	public function fetch_gist( $url ) {
+	public function fetch_gist( $url, $associative = null ) {
 		$response = wp_remote_get( $url, array( 'sslverify' => false ) );
 
 		if ( 200 === wp_remote_retrieve_response_code( $response ) ) {
-			return json_decode( wp_remote_retrieve_body( $response ) );
+			if ( $this->use_prism ) { $associative = true; }
+			return json_decode( wp_remote_retrieve_body( $response ), $associative );
 		}
 
 		return false;
@@ -744,8 +839,13 @@ class GistPress {
 			$url = 'https://gist.github.com/' . $id . '.json';
 			$json = $this->fetch_gist( $url );
 
-			if ( $json && ! empty( $json->files ) ) {
-				$gist_files = $json->files;
+			$gist_files = array();
+			if ( $json ) {
+				$gist_files = $this->use_prism ? $json['files'] : $json->files;
+			}
+
+			if ( $json && ! empty( $gist_files ) ) {
+				//$gist_files = $json->files;
 				set_transient( $transient_key, $gist_files, WEEK_IN_SECONDS );
 			} else {
 				set_transient( $transient_key, array(), MINUTE_IN_SECONDS * 15 );
@@ -832,6 +932,21 @@ class GistPress {
 	 */
 	protected function unknown() {
 		return '{{unknown}}';
+	}
+
+	/**
+	 * String to identify a failure when retrieving a Gist's HTML.
+	 *
+	 * @since 3.1.0
+	 *
+	 * @return string
+	 */
+	protected function get_prism_lang( $gist_lang ) {
+		if ( isset( $this->prism_gist_langs, $gist_lang ) ) {
+			return $this->prism_gist_langs[ $gist_lang ];
+		}
+
+		return 'unknown';
 	}
 
 	/**
