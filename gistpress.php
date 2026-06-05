@@ -12,7 +12,7 @@
  * Plugin Name:       GistPress with Prism
  * Plugin URI:        https://github.com/bradyvercher/gistpress
  * Description:       Gist oEmbed and shortcode support with caching. Use <a href="https://prismjs.com/">Prism syntax highlighting</a>.
- * Version:           3.0.3
+ * Version:           3.0.3.1
  * Author:            Blazer Six
  * Author URI:        http://www.blazersix.com/
  * License:           GPL-2.0+

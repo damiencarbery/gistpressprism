@@ -430,7 +430,7 @@ class GistPress {
 					// Look up the CSS class for this gist's language (e.g. PHP, CSS, HTML etc.).
 					$prism_lang = $this->get_prism_lang( $json['files'][ $args['file'] ]['language'] );
 
-					$html = wp_sprintf( '<pre><code style="padding:0" class="language-%s">%s</code></pre>', esc_attr( $prism_lang ), esc_html( $json['files'][ $args['file'] ]['content'] ) );
+					$html = wp_sprintf( '<pre><code style="padding:0" class="language-%s">%s</code></pre><div class="gist-file-info"><span><strong><a href="%s">%s</a></strong> hosted with <a href="https://github.com/">GitHub</a>.</span><span><a href="%s">View raw</a></span></div>', esc_attr( $prism_lang ), esc_html( $json['files'][ $args['file'] ]['content'] ), esc_url( $json['html_url'] ), $args['file'],  esc_url( $json['files'][ $args['file'] ]['raw_url'] ) );
 
 					set_transient( $raw_key, $html, $transient_expire );
 
@@ -464,6 +464,10 @@ class GistPress {
 			set_transient( $transient_key, $html, $transient_expire );
 		} else {
 			$this->debug_log( __( '<strong>Output Source:</strong> Transient Cache', 'gistpress' ), $shortcode_hash );
+		}
+
+		if ( $this->use_prism ) {
+			add_action( 'wp_footer', array( $this, 'prism_css' ) );
 		}
 
 		$this->debug_log( '<strong>' . __( 'JSON Endpoint:', 'gistpress' ) . '</strong> ' . $url, $shortcode_hash );
@@ -913,6 +917,20 @@ class GistPress {
 
 		return 'unknown';
 	}
+
+
+	/**
+	 * Add CSS to style the gist footer section when using Prism syntax highlighter.
+	*/
+	public function prism_css() {
+?>
+<style>
+.gist-file-info { display:flex; justify-content:space-between; background-color: #f7f7f7; color: #59636e; padding: 10px; font-size: 12px; margin-top: -0.5em; margin-bottom: 1em; }
+.gist-file-info a { color: #666; text-decoration: none !important; }
+</style>
+<?php
+	}
+
 
 	/**
 	 * Escape a regular expression replacement string.
